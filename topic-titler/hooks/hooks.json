@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/topic_titler.py\" early",
+            "timeout": 10,
+            "statusMessage": "话题初版命名中"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/topic_titler.py\" hook",
+            "timeout": 10,
+            "statusMessage": "话题自动命名检查中"
+          }
+        ]
+      }
+    ]
+  }
+}
