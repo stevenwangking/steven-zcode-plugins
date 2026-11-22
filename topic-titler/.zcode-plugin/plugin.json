@@ -1,6 +1,6 @@
 {
   "name": "topic-titler",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "每轮对话结束后用独立快模型维护稳定的 emoji 话题标题：类别 emoji + 对象｜目标，不打断对话，保护手动改名。",
   "author": {
     "name": "stevenwangking"

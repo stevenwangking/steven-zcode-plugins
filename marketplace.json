@@ -5,7 +5,7 @@
     {
       "name": "topic-titler",
       "source": "./topic-titler",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "description": "Keep stable emoji topic titles (category emoji + object｜goal) updated after every turn, without interrupting the conversation.",
       "displayName": "topic-titler",
       "displayName_i18n": {

@@ -577,10 +577,15 @@ def cmd_early() -> int:
         event = json.loads(raw) if raw.strip() else {}
     except Exception:
         return 0
+    # 入口诊断：区分「钩子未触发」「事件名不匹配」「payload 缺 session_id」（不含对话原文）
+    audit("early-entry", {"status": "early_received", "event_keys": sorted(event.keys()),
+                          "hook_event_name": event.get("hook_event_name"),
+                          "has_session_id": bool(event.get("session_id"))})
     if event.get("hook_event_name") != "UserPromptSubmit":
         return 0
     session_id = event.get("session_id")
     if not session_id:
+        audit("early-entry", {"status": "no_session_id"})
         return 0
     try:
         config = load_config()
@@ -626,7 +631,8 @@ def process_early(session_id: str, config: dict, apply: bool) -> dict:
         if not turns:
             return {"status": "not_ready"}
         first = turns[0]
-        if len(turns) > 1 or first["assistant"]:
+        # 仅拦截多轮；新话题首条即使助手已开跑（流式入库快），仍基于首条用户消息起初版标题。
+        if len(turns) > 1:
             return {"status": "turn_finished"}
         joined = "\n".join(first["user"])
         if len(joined.strip()) < 6 or is_confirmation_turn(joined):
@@ -638,8 +644,22 @@ def process_early(session_id: str, config: dict, apply: bool) -> dict:
             candidate = validate_candidate(candidate, session_row["title"])
         except ValueError as exc:
             return {"status": "invalid_candidate", "error": str(exc), "usage": usage}
+        # 与 Stop 一致：模型对不合结构标题误判 keep 时（首轮尤甚），带反馈强制重评一次。
+        if candidate["action"] == "keep" and not is_wellformed_title(session_row["title"]):
+            candidate, retry_usage = call_model(config, context, {
+                "naming_feedback": "当前标题不符合「类别 emoji + 对象｜目标」结构，不得 keep；必须按结构给出 rename 新标题。",
+            })
+            bump_usage(retry_usage)
+            usage = {k: (usage.get(k, 0) or 0) + (retry_usage.get(k, 0) or 0) for k in usage.keys() | retry_usage.keys()}
+            try:
+                candidate = validate_candidate(candidate, session_row["title"])
+            except ValueError as exc:
+                return {"status": "invalid_candidate", "error": str(exc), "usage": usage}
         if candidate["action"] != "rename":
-            return {"status": "kept", "title": session_row["title"], "usage": usage}
+            result = {"status": "kept", "title": session_row["title"], "usage": usage}
+            if apply:
+                audit(session_id, result)  # early 低频，落审计便于排查「为何没起初版标题」
+            return result
         result = {"status": "preview", "title": candidate["title"],
                   "reason": candidate["reason"], "usage": usage}
         if not apply:
