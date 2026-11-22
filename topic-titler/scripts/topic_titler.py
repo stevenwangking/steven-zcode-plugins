@@ -33,6 +33,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = PLUGIN_ROOT / "prompts" / "naming.md"
 ZCODE_HOME = Path(os.environ.get("ZCODE_HOME", str(Path.home() / ".zcode")))
 DB_PATH = ZCODE_HOME / "cli" / "db" / "db.sqlite"
+TASK_INDEX_PATH = ZCODE_HOME / "v2" / "tasks-index.sqlite"  # 桌面端话题列表数据源
 DATA_DIR = ZCODE_HOME / "topic-titler"
 
 DEFAULTS = {
@@ -227,6 +228,39 @@ def conflicting_titles(con, session_id: str, candidate: str) -> list:
     return [r[0] for r in rows]
 
 
+def sync_task_index(session_id: str, title: str, title_source: str) -> None:
+    """同步桌面端话题列表数据源（tasks-index.sqlite 的 tasks 表）。
+
+    外部直写 db.sqlite 不会触发 app 内部的 v4→task index 同步与
+    task_title_changed 事件，不同步则标题显示有分钟级时滞，且可能被
+    mirror/reconcile 对账的内存旧值覆盖。失败静默，不影响命名主流程。"""
+    if not TASK_INDEX_PATH.exists():
+        return
+    try:
+        con = sqlite3.connect(f"file:{TASK_INDEX_PATH}", uri=True, timeout=2)
+        try:
+            con.execute("PRAGMA busy_timeout=2000")
+            if title_source == "custom":
+                # 用户显式改名：解除旧的自动值并标记 overridden，UI 端即被尊重。
+                con.execute(
+                    "UPDATE tasks SET title = ?, cli_title = ?, cli_title_source = ?, "
+                    "cli_updated_at = ?, title_overridden = 1 WHERE task_id = ?",
+                    (title, title, title_source, int(time.time() * 1000), session_id),
+                )
+            else:
+                # 自动命名：仅在用户未手动固定标题（title_overridden=0）时覆盖。
+                con.execute(
+                    "UPDATE tasks SET title = ?, cli_title = ?, cli_title_source = ?, "
+                    "cli_updated_at = ? WHERE task_id = ? AND title_overridden = 0",
+                    (title, title, title_source, int(time.time() * 1000), session_id),
+                )
+            con.commit()
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+
 def rename_session_row(con, session_id: str, title: str, title_message_id: Optional[str],
                        title_source: str = "generated") -> None:
     """写回 session 表；对瞬时写冲突（readonly/locked）短退避重试后放行。"""
@@ -238,6 +272,7 @@ def rename_session_row(con, session_id: str, title: str, title_message_id: Optio
                 (title, title_source, title_message_id, int(time.time() * 1000), session_id),
             )
             con.commit()
+            sync_task_index(session_id, title, title_source)
             return
         except sqlite3.OperationalError as exc:
             if attempt == 2 or not ("readonly" in str(exc) or "locked" in str(exc)):
