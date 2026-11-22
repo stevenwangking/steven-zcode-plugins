@@ -6,7 +6,7 @@
 
 | 插件 | 说明 |
 | --- | --- |
-| [topic-titler](plugins/topic-titler/) | 话题自动命名：首条消息提交后立即生成初版 emoji 标题，每轮结束后用独立快模型精炼稳定（类别 emoji + 对象｜目标），不打断对话 |
+| [topic-titler](topic-titler/) | 话题自动命名：首条消息提交后立即生成初版 emoji 标题，每轮结束后用独立快模型精炼稳定（类别 emoji + 对象｜目标），不打断对话 |
 
 ## 安装
 
