@@ -297,6 +297,16 @@ def is_confirmation_turn(text: str) -> bool:
     return text.strip(" \t\r\n.!。！").casefold() in CONFIRMATIONS
 
 
+def is_wellformed_title(title: str) -> bool:
+    """核心结构把关：emoji 开头 + 恰好一个全角「｜」且两侧非空。"""
+    if not title or not any(title.startswith(e + " ") for e in EMOJI):
+        return False
+    body = title.split(" ", 1)[1]
+    if body.count("｜") != 1 or "|" in body:
+        return False
+    return all(part and part == part.strip() for part in body.split("｜"))
+
+
 def validate_candidate(candidate, current_title: str) -> dict:
     if not isinstance(candidate, dict) or set(candidate) != {"action", "title", "reason"}:
         raise ValueError("模型输出字段无效")
@@ -466,6 +476,21 @@ def process_session(session_id: str, config: dict, apply: bool) -> dict:
             if apply:
                 audit(session_id, result)
             return result
+
+        # 实测存在模型对不合结构标题误判 keep 的情形（首轮尤甚），落指纹前做结构把关。
+        if candidate["action"] == "keep" and not skipped and not is_wellformed_title(session_row["title"]):
+            candidate, retry_usage = call_model(config, context, {
+                "naming_feedback": "当前标题不符合「类别 emoji + 对象｜目标」结构，不得 keep；必须按结构给出 rename 新标题。",
+            })
+            bump_usage(retry_usage)
+            usage = {k: (usage.get(k, 0) or 0) + (retry_usage.get(k, 0) or 0) for k in usage.keys() | retry_usage.keys()}
+            try:
+                candidate = validate_candidate(candidate, session_row["title"])
+            except ValueError as exc:
+                result = {"status": "invalid_candidate", "error": str(exc), "usage": usage}
+                if apply:
+                    audit(session_id, result)
+                return result
 
         conflicts = conflicting_titles(con, session_id, candidate["title"])
         if candidate["action"] == "rename" and conflicts and not skipped:
@@ -649,7 +674,7 @@ def cmd_early_worker(session_id: str) -> int:
             return 0
         try:
             result = process_early(session_id, config, apply=True)
-            if result.get("status") == "db_error":
+            if result.get("status") in ("db_error", "stale_result", "not_ready", "turn_finished", "thin_prompt", "invalid_candidate"):
                 audit(session_id, result)
         except Exception as exc:  # 后台 worker 任何失败都不打扰用户
             try:
